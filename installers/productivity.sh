@@ -286,6 +286,22 @@ install_tmux() {
     log_success "tmux installed"
 }
 
+# Install asciinema
+install_asciinema() {
+    if command -v asciinema &> /dev/null; then
+        log_warning "asciinema already installed"
+        return 0
+    fi
+    
+    log_info "Installing asciinema..."
+    if [ "$PKG_MANAGER" = "apt" ]; then
+        apt install -y asciinema
+    else
+        yum install -y asciinema
+    fi
+    log_success "asciinema installed"
+}
+
 # Main installation
 main() {
     install_starship
@@ -305,6 +321,7 @@ main() {
     install_btop
     install_htop
     install_tmux
+    install_asciinema
     
     log_success "Modern CLI Productivity tools installation complete!"
 }
