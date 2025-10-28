@@ -1,0 +1,342 @@
+#!/bin/bash
+
+#############################################
+# Security Scanner Wrapper
+# Runs multiple security scanners on a directory or image
+#############################################
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+show_banner() {
+    clear
+    echo -e "${CYAN}"
+    cat << "EOF"
+╔═══════════════════════════════════════════════════════╗
+║                                                       ║
+║         🔒 All-in-One Security Scanner 🔒             ║
+║                                                       ║
+║    Comprehensive security scanning for DevOps        ║
+║                                                       ║
+╚═══════════════════════════════════════════════════════╝
+EOF
+    echo -e "${NC}\n"
+}
+
+show_usage() {
+    echo "Usage: sec-scan [OPTIONS] <target>"
+    echo ""
+    echo "Options:"
+    echo "  -d, --directory    Scan directory (default)"
+    echo "  -i, --image        Scan Docker image"
+    echo "  -a, --all          Run all available scanners"
+    echo "  -h, --help         Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  sec-scan .                    # Scan current directory"
+    echo "  sec-scan -i myimage:latest    # Scan Docker image"
+    echo "  sec-scan -a /path/to/project  # Run all scanners on directory"
+    echo ""
+}
+
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}[✓]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[✗]${NC} $1"
+}
+
+log_warning() {
+    echo -e "${YELLOW}[!]${NC} $1"
+}
+
+log_header() {
+    echo -e "\n${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}${BOLD}$1${NC}"
+    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+}
+
+# Check if tool is installed
+check_tool() {
+    if command -v "$1" &> /dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Scan with Trivy (filesystem)
+scan_trivy_fs() {
+    local target="$1"
+    
+    if ! check_tool trivy; then
+        log_warning "trivy not installed - skipping"
+        return
+    fi
+    
+    log_header "🔍 Trivy Filesystem Scan"
+    log_info "Scanning: $target"
+    
+    trivy fs --severity HIGH,CRITICAL "$target"
+    
+    if [ $? -eq 0 ]; then
+        log_success "Trivy filesystem scan completed"
+    else
+        log_error "Trivy filesystem scan failed"
+    fi
+}
+
+# Scan with Trivy (image)
+scan_trivy_image() {
+    local image="$1"
+    
+    if ! check_tool trivy; then
+        log_warning "trivy not installed - skipping"
+        return
+    fi
+    
+    log_header "🐳 Trivy Image Scan"
+    log_info "Scanning image: $image"
+    
+    trivy image --severity HIGH,CRITICAL "$image"
+    
+    if [ $? -eq 0 ]; then
+        log_success "Trivy image scan completed"
+    else
+        log_error "Trivy image scan failed"
+    fi
+}
+
+# Scan with hadolint
+scan_hadolint() {
+    local dir="$1"
+    
+    if ! check_tool hadolint; then
+        log_warning "hadolint not installed - skipping"
+        return
+    fi
+    
+    log_header "🐋 Hadolint Dockerfile Scan"
+    
+    # Find all Dockerfiles
+    local dockerfiles=$(find "$dir" -name "Dockerfile" -o -name "Dockerfile.*" 2>/dev/null)
+    
+    if [ -z "$dockerfiles" ]; then
+        log_warning "No Dockerfiles found in $dir"
+        return
+    fi
+    
+    for dockerfile in $dockerfiles; do
+        log_info "Scanning: $dockerfile"
+        hadolint "$dockerfile"
+    done
+    
+    log_success "Hadolint scan completed"
+}
+
+# Scan with tfsec
+scan_tfsec() {
+    local dir="$1"
+    
+    if ! check_tool tfsec; then
+        log_warning "tfsec not installed - skipping"
+        return
+    fi
+    
+    # Check if there are any .tf files
+    if ! find "$dir" -name "*.tf" | grep -q .; then
+        log_warning "No Terraform files found - skipping tfsec"
+        return
+    fi
+    
+    log_header "💠 tfsec Terraform Scan"
+    log_info "Scanning: $dir"
+    
+    tfsec "$dir"
+    
+    if [ $? -eq 0 ]; then
+        log_success "tfsec scan completed"
+    else
+        log_warning "tfsec found issues"
+    fi
+}
+
+# Scan with checkov
+scan_checkov() {
+    local dir="$1"
+    
+    if ! check_tool checkov; then
+        log_warning "checkov not installed - skipping"
+        return
+    fi
+    
+    log_header "☑️  Checkov IaC Scan"
+    log_info "Scanning: $dir"
+    
+    checkov -d "$dir" --compact --quiet
+    
+    if [ $? -eq 0 ]; then
+        log_success "checkov scan completed"
+    else
+        log_warning "checkov found issues"
+    fi
+}
+
+# Scan with git-secrets
+scan_git_secrets() {
+    local dir="$1"
+    
+    if ! check_tool git-secrets; then
+        log_warning "git-secrets not installed - skipping"
+        return
+    fi
+    
+    # Check if it's a git repository
+    if [ ! -d "$dir/.git" ]; then
+        log_warning "Not a git repository - skipping git-secrets"
+        return
+    fi
+    
+    log_header "🔐 git-secrets Scan"
+    log_info "Scanning: $dir"
+    
+    cd "$dir" || return
+    git secrets --scan
+    
+    if [ $? -eq 0 ]; then
+        log_success "git-secrets scan completed - no secrets found"
+    else
+        log_error "git-secrets found potential secrets!"
+    fi
+}
+
+# Directory scan
+scan_directory() {
+    local dir="$1"
+    
+    show_banner
+    log_info "Starting comprehensive security scan of: $dir"
+    echo ""
+    
+    # Run all applicable scanners
+    scan_trivy_fs "$dir"
+    scan_hadolint "$dir"
+    scan_tfsec "$dir"
+    scan_checkov "$dir"
+    scan_git_secrets "$dir"
+    
+    # Summary
+    log_header "✨ Security Scan Complete"
+    echo -e "${CYAN}${BOLD}Summary:${NC}"
+    echo "• Scanned: $dir"
+    echo "• Tools used: trivy, hadolint, tfsec, checkov, git-secrets"
+    echo ""
+    echo -e "${YELLOW}${BOLD}Recommendations:${NC}"
+    echo "• Review all HIGH and CRITICAL vulnerabilities"
+    echo "• Fix Dockerfile linting issues"
+    echo "• Address IaC misconfigurations"
+    echo "• Remove any detected secrets immediately"
+    echo ""
+}
+
+# Image scan
+scan_image() {
+    local image="$1"
+    
+    show_banner
+    log_info "Starting security scan of Docker image: $image"
+    echo ""
+    
+    # Check if image exists locally
+    if ! docker image inspect "$image" &>/dev/null; then
+        log_warning "Image not found locally - attempting to pull..."
+        docker pull "$image"
+    fi
+    
+    # Run image scanners
+    scan_trivy_image "$image"
+    
+    # Summary
+    log_header "✨ Image Scan Complete"
+    echo -e "${CYAN}${BOLD}Summary:${NC}"
+    echo "• Scanned image: $image"
+    echo "• Tool used: trivy"
+    echo ""
+    echo -e "${YELLOW}${BOLD}Recommendations:${NC}"
+    echo "• Review all vulnerabilities"
+    echo "• Update base image to latest patched version"
+    echo "• Consider using distroless or minimal base images"
+    echo "• Sign images with cosign"
+    echo ""
+}
+
+# Main
+main() {
+    local mode="directory"
+    local target=""
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            -d|--directory)
+                mode="directory"
+                shift
+                ;;
+            -i|--image)
+                mode="image"
+                shift
+                ;;
+            -a|--all)
+                mode="directory"
+                shift
+                ;;
+            *)
+                target="$1"
+                shift
+                ;;
+        esac
+    done
+    
+    # Validate target
+    if [ -z "$target" ]; then
+        log_error "No target specified"
+        show_usage
+        exit 1
+    fi
+    
+    # Execute scan
+    case $mode in
+        directory)
+            if [ ! -d "$target" ]; then
+                log_error "Directory not found: $target"
+                exit 1
+            fi
+            scan_directory "$target"
+            ;;
+        image)
+            scan_image "$target"
+            ;;
+        *)
+            log_error "Invalid mode: $mode"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

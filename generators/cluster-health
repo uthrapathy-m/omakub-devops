@@ -1,0 +1,307 @@
+#!/bin/bash
+
+#############################################
+# Kubernetes Cluster Health Check
+# Comprehensive cluster status and diagnostics
+#############################################
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+show_banner() {
+    clear
+    echo -e "${CYAN}"
+    cat << "EOF"
+╔═══════════════════════════════════════════════════════╗
+║                                                       ║
+║         ☸️  Kubernetes Cluster Health Check ☸️         ║
+║                                                       ║
+║       Comprehensive cluster diagnostics               ║
+║                                                       ║
+╚═══════════════════════════════════════════════════════╝
+EOF
+    echo -e "${NC}\n"
+}
+
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}[✓]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[✗]${NC} $1"
+}
+
+log_warning() {
+    echo -e "${YELLOW}[!]${NC} $1"
+}
+
+log_header() {
+    echo -e "\n${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}${BOLD}$1${NC}"
+    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+}
+
+# Check if kubectl is available
+check_kubectl() {
+    if ! command -v kubectl &> /dev/null; then
+        log_error "kubectl not found. Please install kubectl."
+        exit 1
+    fi
+}
+
+# Check cluster connectivity
+check_connectivity() {
+    log_header "🔌 Cluster Connectivity"
+    
+    local context=$(kubectl config current-context 2>/dev/null)
+    if [ -z "$context" ]; then
+        log_error "No active Kubernetes context"
+        exit 1
+    fi
+    
+    log_success "Current context: $context"
+    
+    if kubectl cluster-info &>/dev/null; then
+        log_success "Cluster is reachable"
+        kubectl cluster-info | head -2
+    else
+        log_error "Cannot connect to cluster"
+        exit 1
+    fi
+}
+
+# Check node health
+check_nodes() {
+    log_header "🖥️  Node Status"
+    
+    local total_nodes=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+    local ready_nodes=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready")
+    local not_ready=$(kubectl get nodes --no-headers 2>/dev/null | grep -v " Ready" | wc -l)
+    
+    echo -e "${BOLD}Total Nodes:${NC} $total_nodes"
+    echo -e "${GREEN}Ready:${NC} $ready_nodes"
+    
+    if [ "$not_ready" -gt 0 ]; then
+        echo -e "${RED}Not Ready:${NC} $not_ready"
+        log_warning "Some nodes are not ready!"
+    fi
+    
+    echo ""
+    kubectl get nodes -o wide
+    
+    # Check for node issues
+    echo ""
+    log_info "Checking node conditions..."
+    kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' | \
+        awk '{if($2!="True") print "\033[0;31m✗\033[0m " $1 " is not ready"; else print "\033[0;32m✓\033[0m " $1 " is ready"}'
+}
+
+# Check system pods
+check_system_pods() {
+    log_header "🔧 System Pods Health"
+    
+    local namespaces=("kube-system" "kube-public" "kube-node-lease")
+    
+    for ns in "${namespaces[@]}"; do
+        if kubectl get namespace "$ns" &>/dev/null; then
+            echo -e "${BOLD}Namespace: $ns${NC}"
+            
+            local total=$(kubectl get pods -n "$ns" --no-headers 2>/dev/null | wc -l)
+            local running=$(kubectl get pods -n "$ns" --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+            local pending=$(kubectl get pods -n "$ns" --field-selector=status.phase=Pending --no-headers 2>/dev/null | wc -l)
+            local failed=$(kubectl get pods -n "$ns" --field-selector=status.phase=Failed --no-headers 2>/dev/null | wc -l)
+            
+            echo "  Total: $total | Running: $running | Pending: $pending | Failed: $failed"
+            
+            if [ "$failed" -gt 0 ] || [ "$pending" -gt 0 ]; then
+                log_warning "Issues detected in $ns"
+                kubectl get pods -n "$ns" | grep -E "Pending|Failed|CrashLoopBackOff|Error"
+            fi
+            echo ""
+        fi
+    done
+}
+
+# Check resource usage
+check_resources() {
+    log_header "📊 Resource Usage"
+    
+    if command -v kubectl-top &> /dev/null || kubectl top nodes &>/dev/null 2>&1; then
+        log_info "Node resource usage:"
+        kubectl top nodes 2>/dev/null || log_warning "Metrics server not available"
+        
+        echo ""
+        log_info "Top 10 pods by CPU:"
+        kubectl top pods -A --sort-by=cpu 2>/dev/null | head -11 || log_warning "Metrics server not available"
+        
+        echo ""
+        log_info "Top 10 pods by Memory:"
+        kubectl top pods -A --sort-by=memory 2>/dev/null | head -11 || log_warning "Metrics server not available"
+    else
+        log_warning "kubectl top not available - install metrics-server for resource monitoring"
+    fi
+}
+
+# Check deployments
+check_deployments() {
+    log_header "🚀 Deployments Status"
+    
+    local total=$(kubectl get deployments -A --no-headers 2>/dev/null | wc -l)
+    
+    if [ "$total" -eq 0 ]; then
+        log_info "No deployments found"
+        return
+    fi
+    
+    echo -e "${BOLD}Total deployments:${NC} $total"
+    echo ""
+    
+    # Check for unhealthy deployments
+    kubectl get deployments -A -o wide | head -1
+    kubectl get deployments -A --no-headers | while read ns name ready uptodate available age rest; do
+        local desired=$(echo "$ready" | cut -d'/' -f2)
+        local current=$(echo "$ready" | cut -d'/' -f1)
+        
+        if [ "$current" != "$desired" ]; then
+            echo -e "${RED}✗${NC} $ns/$name - $ready"
+        else
+            echo -e "${GREEN}✓${NC} $ns/$name - $ready"
+        fi
+    done
+}
+
+# Check services and endpoints
+check_services() {
+    log_header "🌐 Services & Endpoints"
+    
+    local total_svc=$(kubectl get svc -A --no-headers 2>/dev/null | wc -l)
+    echo -e "${BOLD}Total services:${NC} $total_svc"
+    
+    # Check for services without endpoints
+    log_info "Checking for services without endpoints..."
+    
+    kubectl get svc -A -o json | jq -r '.items[] | select(.spec.type != "ExternalName") | "\(.metadata.namespace)/\(.metadata.name)"' | while read svc; do
+        local ns=$(echo "$svc" | cut -d'/' -f1)
+        local name=$(echo "$svc" | cut -d'/' -f2)
+        
+        local endpoints=$(kubectl get endpoints -n "$ns" "$name" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null)
+        
+        if [ -z "$endpoints" ]; then
+            log_warning "Service $ns/$name has no endpoints"
+        fi
+    done 2>/dev/null
+}
+
+# Check persistent volumes
+check_storage() {
+    log_header "💾 Storage Status"
+    
+    local pv_count=$(kubectl get pv --no-headers 2>/dev/null | wc -l)
+    local pvc_count=$(kubectl get pvc -A --no-headers 2>/dev/null | wc -l)
+    
+    echo -e "${BOLD}Persistent Volumes:${NC} $pv_count"
+    echo -e "${BOLD}Persistent Volume Claims:${NC} $pvc_count"
+    
+    if [ "$pv_count" -gt 0 ]; then
+        echo ""
+        kubectl get pv
+    fi
+    
+    # Check for pending PVCs
+    local pending_pvcs=$(kubectl get pvc -A --field-selector=status.phase=Pending --no-headers 2>/dev/null | wc -l)
+    if [ "$pending_pvcs" -gt 0 ]; then
+        echo ""
+        log_warning "$pending_pvcs PVC(s) in Pending state:"
+        kubectl get pvc -A --field-selector=status.phase=Pending
+    fi
+}
+
+# Check events
+check_events() {
+    log_header "⚠️  Recent Events"
+    
+    log_info "Recent warning and error events:"
+    kubectl get events -A --sort-by='.lastTimestamp' --field-selector type!=Normal | tail -20
+}
+
+# Check certificate expiration
+check_certs() {
+    log_header "🔐 Certificate Status"
+    
+    if command -v kubeadm &> /dev/null; then
+        log_info "Checking certificate expiration..."
+        sudo kubeadm certs check-expiration 2>/dev/null || log_warning "kubeadm not available or not enough permissions"
+    else
+        log_warning "kubeadm not found - skipping certificate check"
+    fi
+}
+
+# Run diagnostics
+run_diagnostics() {
+    if command -v popeye &> /dev/null; then
+        log_header "🔍 Cluster Diagnostics (Popeye)"
+        log_info "Running popeye scan..."
+        popeye --save --output-file popeye-report.txt
+        log_success "Report saved to: popeye-report.txt"
+    fi
+}
+
+# Generate summary
+show_summary() {
+    log_header "📋 Health Check Summary"
+    
+    local context=$(kubectl config current-context)
+    local nodes=$(kubectl get nodes --no-headers 2>/dev/null | wc -l)
+    local ready_nodes=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready")
+    local pods=$(kubectl get pods -A --no-headers 2>/dev/null | wc -l)
+    local running_pods=$(kubectl get pods -A --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+    
+    echo -e "${CYAN}${BOLD}Cluster:${NC} $context"
+    echo -e "${CYAN}${BOLD}Nodes:${NC} $ready_nodes/$nodes Ready"
+    echo -e "${CYAN}${BOLD}Pods:${NC} $running_pods/$pods Running"
+    echo ""
+    
+    echo -e "${YELLOW}${BOLD}Recommendations:${NC}"
+    echo "• Review any failed or pending pods"
+    echo "• Check nodes that are not ready"
+    echo "• Ensure deployments are at desired replica count"
+    echo "• Monitor resource usage and scale if needed"
+    echo "• Review recent warning events"
+    echo ""
+    
+    echo -e "${GREEN}${BOLD}For detailed diagnostics, run:${NC}"
+    echo "• kubectl describe nodes"
+    echo "• kubectl get events -A --sort-by='.lastTimestamp'"
+    echo "• popeye (if installed)"
+    echo ""
+}
+
+# Main
+main() {
+    show_banner
+    check_kubectl
+    check_connectivity
+    check_nodes
+    check_system_pods
+    check_deployments
+    check_services
+    check_storage
+    check_resources
+    check_events
+    check_certs
+    run_diagnostics
+    show_summary
+}
+
+main "$@"
