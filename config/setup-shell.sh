@@ -5,18 +5,14 @@
 # Enhanced bash prompt with K8s context, git status, and more
 #############################################
 
-source "$(dirname "$0")/../install.sh" 2>/dev/null || true
+# Source common utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/common.sh"
+
+# Initialize
+init_common
 
 log_header "⚙️  Setting Up Shell Configuration"
-
-# Get user info
-if [ -n "$SUDO_USER" ]; then
-    ACTUAL_USER=$SUDO_USER
-    USER_HOME=$(eval echo ~$SUDO_USER)
-else
-    ACTUAL_USER=$USER
-    USER_HOME=$HOME
-fi
 
 # Backup existing bashrc
 backup_bashrc() {

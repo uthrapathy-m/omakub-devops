@@ -4,7 +4,12 @@
 # Container & Orchestration Tools Installer
 ##############################################
 
-source "$(dirname "$0")/../install.sh" 2>/dev/null || true
+# Source common utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../lib/common.sh"
+
+# Initialize
+init_common
 
 log_header "📦 Installing Container & Orchestration Tools"
 

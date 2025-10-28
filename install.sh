@@ -25,29 +25,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="$SCRIPT_DIR/installers"
 GENERATORS_DIR="$SCRIPT_DIR/generators"
 CONFIG_DIR="$SCRIPT_DIR/config"
+LIB_DIR="$SCRIPT_DIR/lib"
 
-# Logging functions
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[✓]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[✗]${NC} $1"
-}
-
-log_warning() {
-    echo -e "${YELLOW}[!]${NC} $1"
-}
-
-log_header() {
-    echo -e "\n${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${CYAN}${BOLD}$1${NC}"
-    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
-}
+# Source common utilities
+source "$LIB_DIR/common.sh"
 
 # Show banner
 show_banner() {
@@ -68,52 +49,12 @@ EOF
     echo -e "${NC}\n"
 }
 
-# Detect OS
-detect_os() {
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS=$ID
-        VERSION=$VERSION_ID
-        ARCH=$(uname -m)
-    else
-        log_error "Cannot detect OS. /etc/os-release not found."
-        exit 1
-    fi
-
-    case $OS in
-        ubuntu|debian)
-            PKG_MANAGER="apt"
-            ;;
-        centos|rhel|fedora|amzn)
-            PKG_MANAGER="yum"
-            ;;
-        *)
-            log_error "Unsupported OS: $OS"
-            exit 1
-            ;;
-    esac
-
-    log_success "Detected: $OS $VERSION ($ARCH) - Package Manager: $PKG_MANAGER"
-}
-
 # Check privileges
 check_privileges() {
     if [ "$EUID" -ne 0 ]; then
         log_warning "This script requires sudo privileges."
         exec sudo bash "$0" "$@"
     fi
-}
-
-# Get actual user
-get_actual_user() {
-    if [ -n "$SUDO_USER" ]; then
-        ACTUAL_USER=$SUDO_USER
-        USER_HOME=$(eval echo ~$SUDO_USER)
-    else
-        ACTUAL_USER=$USER
-        USER_HOME=$HOME
-    fi
-    export ACTUAL_USER USER_HOME
 }
 
 # Main menu
@@ -239,8 +180,9 @@ show_summary() {
 # Main execution
 main() {
     check_privileges
-    get_actual_user
-    detect_os
+    init_common
+    
+    log_success "Detected: $OS $VERSION ($ARCH) - Package Manager: $PKG_MANAGER"
     
     show_menu
     read -p "Enter your choice [1-13]: " choice
